@@ -1,3 +1,16 @@
+"""
+update_imports.py
+---------------------------------
+Why this exists
+- Convenience script to rewrite imports after copying files into the
+  future_repo_crap layout. Keeps internal references coherent.
+
+How it works
+- Reads each .py file and uses simple regex replacements to map imports to the
+  chaosnet package submodules and examples/ modules. Writes back only if
+  content changed.
+"""
+
 import os
 import re
 from pathlib import Path

@@ -1,3 +1,16 @@
+<#
+copy_files.ps1
+---------------------------------
+Why this exists
+- Helper to snapshot core/source files into future_repo_crap so you can package
+  or experiment without mutating the original working tree.
+
+How it works
+- Copies selected subpackages and example/visualize scripts, then ensures each
+  package directory has an __init__.py. Run update_imports.py afterwards to
+  normalize imports.
+#>
+
 # Set source and destination paths
 $sourceDir = "d:\\Hell"
 $destDir = "d:\\Hell\\future_repo_crap"

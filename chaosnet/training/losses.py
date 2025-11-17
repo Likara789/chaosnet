@@ -1,3 +1,15 @@
+"""
+chaosnet/training/losses.py
+---------------------------------
+Why this exists
+- Central place for supervised loss and simple spike-activity regularizers.
+
+How it works
+- classification_loss wraps cross-entropy.
+- firing_rate_loss computes the absolute deviation from a target firing rate
+  across layers to encourage stable, sparse spiking.
+"""
+
 # chaosnet/training/losses.py
 
 import torch

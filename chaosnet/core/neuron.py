@@ -1,3 +1,17 @@
+"""
+chaosnet/core/neuron.py
+---------------------------------
+Why this exists
+- Provides low-level spiking primitives and a small state container used by
+  layers and the cortex. Surrogate gradients allow us to train with standard
+  autograd despite the non-differentiable spike.
+
+How it works
+- SpikeFn implements a straight-through estimator: forward is a hard threshold
+  while backward returns a smooth triangular slope near the threshold so the
+  network can learn. ChaosState carries membrane and refractory tensors.
+"""
+
 # chaosnet/core/neuron.py
 
 import torch

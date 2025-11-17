@@ -1,3 +1,15 @@
+"""
+setup.py for chaosnet (future_repo_crap)
+---------------------------------
+Why this exists
+- Provides packaging metadata and dependencies so the copied package can be
+  installed and imported elsewhere.
+
+How it works
+- Uses setuptools to discover packages and declare runtime/dev/doc extras.
+  Adjust metadata (name, author, url) before distribution.
+"""
+
 from setuptools import setup, find_packages
 
 with open("README.md", "r", encoding="utf-8") as fh:
@@ -6,12 +18,12 @@ with open("README.md", "r", encoding="utf-8") as fh:
 setup(
     name="chaosnet",
     version="0.1.0",
-    author="Your Name",
-    author_email="your.email@example.com",
+    author="Likara789",
+    author_email="lowkeytripping.dev@gmail.com",
     description="A robust and efficient neural network architecture inspired by chaotic systems",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/chaosnet",
+    url="https://github.com/Likara789/chaosnet",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",

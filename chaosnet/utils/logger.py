@@ -1,3 +1,15 @@
+"""
+chaosnet/utils/logger.py
+---------------------------------
+Why this exists
+- Tiny logger to collect scalar metrics during toy runs without pulling in a
+  heavy logging framework.
+
+How it works
+- Append-only lists keyed by epoch and per-epoch dict for auxiliary metrics.
+  Extend as needed in experiments.
+"""
+
 # utils/logger.py
 
 class TrainLogger:

@@ -1,3 +1,15 @@
+"""
+chaosnet/training/utils.py
+---------------------------------
+Why this exists
+- Shared, minimal training loop so examples can focus on models/datasets.
+
+How it works
+- Expects model(x) -> (logits, spikes_per_layer). If a firing-rate regularizer
+  is requested, we compute an additional loss term from spike statistics to
+  keep average activity near a target (helps stability and sparsity).
+"""
+
 # chaosnet/training/utils.py
 
 import torch

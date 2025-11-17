@@ -15,12 +15,12 @@ Thank you for your interest in contributing to ChaosNet! We welcome all contribu
 
 ## 🤝 Code of Conduct
 
-This project and everyone participating in it is governed by our [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.
+This project and everyone participating in it is governed by our [Code of Conduct](https://github.com/Likara789/chaosnet/blob/main/CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.
 
 ## 💡 How Can I Contribute?
 
 ### Reporting Bugs
-- Check if the bug has already been reported in the [issues](https://github.com/yourusername/chaosnet/issues)
+- Check if the bug has already been reported in the [issues](https://github.com/Likara789/chaosnet/issues)
 - If not, create a new issue with a clear title and description
 - Include steps to reproduce the issue, expected behavior, and actual behavior
 - Add code examples or screenshots if applicable
