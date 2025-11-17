@@ -1,16 +1,3 @@
-"""
-examples/train_dummy.py
----------------------------------
-Why this exists
-- Minimal end-to-end example: build a tiny ChaosCortex and train it to solve
-  XOR. Shows how to wire neuron/cortex params, run a training loop, and read
-  out spikes for regularization or inspection.
-
-How it works
-- Creates a two-layer cortex and a linear readout. One call to cortex is one
-  tick; for multi-tick experiments you would loop and pass/keep state.
-"""
-
 # examples/train_dummy.py
 
 import torch

@@ -172,9 +172,38 @@ Use that pattern whenever you want to wrap a new modality around the ChaosNet co
 5. **Energy Efficient**: Trains at 56°C GPU temperature vs 80°C for traditional networks.
 6. **Knowledge Retention**: Shows strong retention capabilities with minimal forgetting between tasks.
 
-## 📊 Recent Results (November 2025)
+## 🏁 November 17, 2025 Multi-Task Run
 
-### Model Performance
+Sequential retention training on AG_NEWS, MNIST, and EMNIST_LETTERS delivered clean convergence while recovering from near-random baselines. 4K parameters, 50% death rate, 10 ticks.
+
+| Dataset         | Start Acc (retention) | End Val Acc | Best Test Acc | Δ Acc (start→end) |
+|-----------------|-----------------------|-------------|---------------|------------------|
+| AG_NEWS         | 22.78%                | 86.31%      | 89.18%        | +63.53 pts       |
+| MNIST           | 8.14%                 | 98.87%      | 99.08%        | +90.73 pts       |
+| EMNIST_LETTERS  | 4.58%                 | 92.90%      | 92.49%        | +88.32 pts       |
+
+- **AG_NEWS progress**: Validation accuracy climbed steadily from 26.37% (epoch 1) to 86.31% (epoch 8), with the final test run hitting 89.18%.
+- **MNIST progress**: Early epochs warmed up quickly (95.58% val at epoch 1) and plateaued around 98.8%, finishing with 99.08% on the test set.
+- **EMNIST_LETTERS progress**: After the first epoch (78.25% val) accuracy exceeded 90%, ending at 92.90% validation and 92.49% test accuracy across ten epochs.
+ 
+## 🏁 November 17, 2025 Multi-Task Run (Second Wave)
+
+Repeated sequential training using `experiments/multimodal/20251117_164050` kept the retention momentum, matching the prior rise while slightly tweaking peak metrics. 2K parameters, 50% death rate, 10 ticks.
+
+| Dataset         | Start Acc (retention) | End Val Acc | Best Test Acc | Δ Acc (start→end) |
+|-----------------|-----------------------|-------------|---------------|------------------|
+| AG_NEWS         | 22.78%                | 86.31%      | 89.18%        | +63.53 pts       |
+| MNIST           | 8.14%                 | 98.92%      | 99.04%        | +90.78 pts       |
+| EMNIST_LETTERS  | 4.58%                 | 92.84%      | 92.53%        | +88.26 pts       |
+
+- **AG_NEWS epochs 1→8**: Validation steadily climbed from 29.97% to 86.31%, closing with 89.18% on the held-out test split.
+- **MNIST epochs 1→8**: Initial val of 95.55% rose to a 98.92% peak, with testing staying at 99.04%.
+- **EMNIST_LETTERS epochs 1→10**: Crossed 90% validation in epoch 5 and ended at 92.84% val / 92.53% test.
+
+
+## 📊 Recent Results (November 16, 2025)
+
+### Model Multi-Task Performance
 | Dataset      | Best Val Acc | Test Acc  | Epochs |
 |--------------|--------------|-----------|--------|
 | AG_NEWS     | 86.59%       | 89.24%   | 4      |
@@ -203,10 +232,10 @@ If you use ChaosNet in your research, please cite:
 ```bibtex
 @misc{chaosnet2025,
   title={ChaosNet: Robust and Efficient Neural Networks with Chaotic Dynamics},
-  author={Your Name},
+  author={Likara789},
   year={2025},
   publisher={GitHub},
-  howpublished={\url{https://github.com/yourusername/chaosnet}}
+  howpublished={\url{https://github.com/Likara789/chaosnet}}
 }
 ```
 

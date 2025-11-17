@@ -1,21 +1,3 @@
-"""
-chaosnet/core/layer.py
----------------------------------
-Why this exists
-- Implements a single recurrent spiking layer with explicit excitatory/inhibitory
-  (E/I) structure, a common biological prior that stabilizes dynamics.
-
-How it works
-- We split hidden units into 80% excitatory, 20% inhibitory. We then enforce
-  sign constraints on the recurrent weights so E-only emit positive and I-only
-  emit negative impacts. This is applied once at initialization and can also be
-  re-applied after weight updates if desired (here it’s applied at init).
-- The layer holds feedforward and recurrent Linear modules and advances a
-  ChaosState via the surrogate spike nonlinearity.
-"""
-
-# chaosnet/core/layer.py
-
 import torch
 from torch import nn
 from chaosnet.neuron import spike, ChaosState

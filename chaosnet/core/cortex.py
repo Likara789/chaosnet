@@ -1,21 +1,3 @@
-"""
-chaosnet/core/cortex.py
----------------------------------
-Why this exists
-- Encapsulates a stack of ChaosLayer modules to form a small "cortex" that
-  can be driven for multiple ticks. The state for each layer is explicit so
-  callers can decide whether to maintain temporal continuity (by reusing
-  states) or start fresh (by reinitializing states).
-
-How it works
-- On construction, we build a list of layers from the provided CortexParams.
-- init_state creates per-layer ChaosState tensors (membrane/refractory) sized
-  for the batch. This separates parameters (on module) from state (per batch).
-- forward accepts an optional list of states. If none is given, it will
-  initialize empty states for a single tick use-case. Each layer receives the
-  same input for a given tick and returns both its spikes and updated state.
-"""
-
 # chaosnet/core/cortex.py
 
 import torch
