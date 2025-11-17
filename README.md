@@ -6,6 +6,22 @@
 
 ChaosNet is a novel neural network architecture inspired by chaotic systems, featuring extreme fault tolerance and cross-domain capabilities. This repository contains implementations for various tasks including computer vision and natural language processing.
 
+## 📚 Documentation
+
+For comprehensive documentation, including detailed explanations of the architecture, implementation details, and code organization, please refer to the extensive in-line documentation in the following files:
+
+- `multimodel_trainin.py` - Contains the core implementation with detailed docstrings explaining:
+  - Model architectures (ChaosLanguageModel, ChaosVisionModel)
+  - Data loading and preprocessing utilities
+  - Training and evaluation loops
+  - Hyperparameter configurations
+
+- `chaosnet/core/cortex.py` - Core chaos network implementation
+- `chaosnet/core/layer.py` - Layer implementations for the chaos network
+- `chaosnet/training/losses.py` - Custom loss functions
+
+All Python files include detailed docstrings following the Google Python Style Guide, which can be viewed using Python's built-in `help()` function or through most modern IDEs.
+
 ## ✨ Features
 
 - **Fault Tolerance**: Maintains high accuracy with up to 99.9% random neuron death

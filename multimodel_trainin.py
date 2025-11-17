@@ -1,3 +1,21 @@
+"""
+Multi-Modal Training Script for ChaosNet
+---------------------------------------
+This script implements a multi-modal learning system using ChaosNet architecture.
+It supports training on different types of data (text, images) with shared or separate
+neural components. The implementation includes data loading, model definition,
+training loops, and evaluation metrics.
+
+Key Components:
+- Text classification using AG News dataset
+- Image classification using MNIST and EMNIST datasets
+- Shared ChaosCortex for cross-modal learning
+- Training and evaluation utilities
+
+Author: Likara789
+Email: lowkeytripping.dev@gmail.com
+"""
+
 import csv
 import json
 import pickle
@@ -19,13 +37,18 @@ from torchvision import datasets, transforms
 from chaosnet.config import ChaosNeuronParams, CortexParams
 from chaosnet.core.cortex import ChaosCortex
 
-PAD_TOKEN = "<pad>"
-UNK_TOKEN = "<unk>"
-PAD_IDX = 0
-UNK_IDX = 1
-NUM_AG_CLASSES = 4
-NUM_MNIST_CLASSES = 10
-NUM_EMNIST_CLASSES = 26
+# Constants for text processing and model configuration
+PAD_TOKEN = "<pad>"  # Padding token for sequence alignment
+UNK_TOKEN = "<unk>"  # Token for unknown/out-of-vocabulary words
+PAD_IDX = 0          # Index for padding token in vocabulary
+UNK_IDX = 1          # Index for unknown token in vocabulary
+
+# Dataset-specific constants
+NUM_AG_CLASSES = 4        # Number of classes in AG News dataset
+NUM_MNIST_CLASSES = 10    # Number of classes in MNIST (digits 0-9)
+NUM_EMNIST_CLASSES = 26   # Number of classes in EMNIST (letters A-Z)
+
+# Dataset URLs and paths
 AG_NEWS_URL = "https://s3.amazonaws.com/fast-ai-nlp/ag_news_csv.tgz"
 AG_NEWS_DIR = Path("./data/ag_news")
 TOKEN_REGEX = re.compile(r"\w+")
@@ -36,16 +59,49 @@ def rotate_emnist(image):
 
 
 class LanguageDataset(Dataset):
+    """
+    A PyTorch Dataset class for handling text data for language modeling.
+    
+    This class handles tokenization, numericalization, and padding of text data
+    to create fixed-length sequences suitable for neural network processing.
+    
+    Args:
+        samples (list): List of (text, label) tuples
+        vocab (dict): Vocabulary mapping tokens to indices
+        tokenizer (callable): Function to split text into tokens
+        max_len (int): Maximum sequence length (longer sequences will be truncated)
+    """
     def __init__(self, samples, vocab, tokenizer, max_len=128):
+        """
+        Initialize the LanguageDataset instance.
+        
+        Args:
+            samples (list): List of (text, label) tuples
+            vocab (dict): Vocabulary mapping tokens to indices
+            tokenizer (callable): Function to split text into tokens
+            max_len (int): Maximum sequence length (longer sequences will be truncated)
+        """
         self.samples = samples
         self.vocab = vocab
         self.tokenizer = tokenizer
         self.max_len = max_len
 
     def __len__(self):
+        """Return the total number of samples in the dataset."""
         return len(self.samples)
 
     def __getitem__(self, idx):
+        """
+        Get a single sample from the dataset.
+        
+        Args:
+            idx (int): Index of the sample to retrieve
+            
+        Returns:
+            tuple: (tokens_tensor, label_tensor) where:
+                - tokens_tensor: Padded sequence of token indices
+                - label_tensor: Class label as a tensor
+        """
         label, text = self.samples[idx]
         tokens = self.tokenizer(text)[: self.max_len]
         indices = [self.vocab.get(token, UNK_IDX) for token in tokens]
@@ -55,188 +111,261 @@ class LanguageDataset(Dataset):
 
 
 def build_vocab(samples, tokenizer, min_freq=5, max_tokens=20000):
+    """
+    Build a vocabulary from the given text samples.
+    
+    Args:
+        samples (list): List of (label, text) tuples
+        tokenizer (callable): Function to split text into tokens
+        min_freq (int): Minimum frequency for a token to be included
+        max_tokens (int): Maximum vocabulary size (most frequent tokens)
+        
+    Returns:
+        dict: Vocabulary mapping tokens to indices
+    """
     counter = Counter()
+    # Count token frequencies across all samples
     for _, text in samples:
         counter.update(tokenizer(text))
-
+        
+    # Initialize with special tokens
     vocab = {PAD_TOKEN: PAD_IDX, UNK_TOKEN: UNK_IDX}
-    for token, freq in counter.most_common():
-        if freq < min_freq or len(vocab) >= max_tokens:
-            break
-        vocab[token] = len(vocab)
-
+    
+    # Add most frequent tokens that meet minimum frequency
+    for token, count in counter.most_common(max_tokens):
+        if count >= min_freq:
+            vocab[token] = len(vocab)
+            
     return vocab
 
 
 def download_ag_news():
+    """
+    Download and extract the AG News dataset if it doesn't exist locally.
+    
+    The dataset is downloaded from a predefined URL and extracted to the
+    directory specified by AG_NEWS_DIR.
+    """
     if not AG_NEWS_DIR.exists():
         AG_NEWS_DIR.mkdir(parents=True, exist_ok=True)
-    data_root = AG_NEWS_DIR / "ag_news_csv"
-    if data_root.exists():
-        return data_root
-
-    tar_path = AG_NEWS_DIR / "ag_news_csv.tgz"
-    if not tar_path.exists():
-        print("Downloading AG_NEWS dataset...")
-        urllib.request.urlretrieve(AG_NEWS_URL, tar_path)
-
-    with tarfile.open(tar_path, "r:gz") as tar:
-        tar.extractall(path=AG_NEWS_DIR)
-
-    return data_root
+        print(f"Downloading AG News dataset to {AG_NEWS_DIR}...")
+        filename, _ = urllib.request.urlretrieve(AG_NEWS_URL)
+        with tarfile.open(filename, 'r:gz') as tar:
+            tar.extractall(AG_NEWS_DIR.parent)
+        print("Download complete.")
+    else:
+        print(f"AG News dataset already exists at {AG_NEWS_DIR}")
 
 
 def read_ag_news_split(data_root, split):
-    path = data_root / f"{split}.csv"
+    """
+    Read a split of the AG News dataset.
+    
+    Args:
+        data_root (Path): Root directory containing the dataset
+        split (str): Dataset split to read ('train' or 'test')
+        
+    Returns:
+        list: List of (label, text) tuples
+    """
+    filename = data_root / f"{split}.csv"
     samples = []
-    with path.open("r", encoding="utf-8") as f:
-        reader = csv.reader(f)
-        for label, title, desc in reader:
-            text = f"{title} {desc}"
-            samples.append((int(label), text))
+    with open(filename, 'r', encoding='utf-8') as f:
+        reader = csv.reader(f, delimiter=',', quotechar='"')
+        for row in reader:
+            label, title, description = int(row[0]), row[1], row[2]
+            text = title + ' ' + description  # Combine title and description
+            samples.append((label, text))
     return samples
 
 
 def simple_tokenizer(text):
+    """
+    Simple tokenizer that splits text into lowercase words.
+    
+    Args:
+        text (str): Input text to tokenize
+        
+    Returns:
+        list: List of lowercase word tokens
+    """
     return TOKEN_REGEX.findall(text.lower())
 
 
 def prepare_ag_news_dataloaders(batch_size=64, max_seq_len=128, val_split=0.1):
+    """
+    Prepare DataLoaders for AG News dataset.
+    
+    Args:
+        batch_size (int): Number of samples per batch
+        max_seq_len (int): Maximum sequence length (longer sequences will be truncated)
+        val_split (float): Fraction of training data to use for validation
+        
+    Returns:
+        tuple: (train_loader, val_loader, test_loader, vocab) where:
+            - train_loader: DataLoader for training data
+            - val_loader: DataLoader for validation data
+            - test_loader: DataLoader for test data
+            - vocab: Vocabulary built from training data
+    """
+    # Download and load dataset splits
     data_root = download_ag_news()
     train_samples = read_ag_news_split(data_root, "train")
     test_samples = read_ag_news_split(data_root, "test")
 
+    # Build vocabulary from training data
     vocab = build_vocab(train_samples, simple_tokenizer)
+    
+    # Split training data into train/validation sets
     val_size = int(len(train_samples) * val_split)
-    train_slice, val_slice = (
-        train_samples[val_size:],
-        train_samples[:val_size],
+    train_samples, val_samples = random_split(
+        train_samples, [len(train_samples) - val_size, val_size]
     )
 
-    train_ds = LanguageDataset(train_slice, vocab, simple_tokenizer, max_seq_len)
-    val_ds = LanguageDataset(val_slice, vocab, simple_tokenizer, max_seq_len)
-    test_ds = LanguageDataset(test_samples, vocab, simple_tokenizer, max_seq_len)
+    # Create dataset objects
+    train_dataset = LanguageDataset(train_samples, vocab, simple_tokenizer, max_seq_len)
+    val_dataset = LanguageDataset(val_samples, vocab, simple_tokenizer, max_seq_len)
+    test_dataset = LanguageDataset(test_samples, vocab, simple_tokenizer, max_seq_len)
 
-    train_dl = DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=4,
-        pin_memory=True,
+    # Create data loaders
+    train_loader = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True, num_workers=2
     )
-    val_dl = DataLoader(
-        val_ds,
-        batch_size=batch_size * 2,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=True,
+    val_loader = DataLoader(
+        val_dataset, batch_size=batch_size * 2, shuffle=False, num_workers=2
     )
-    test_dl = DataLoader(
-        test_ds,
-        batch_size=batch_size * 2,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=True,
+    test_loader = DataLoader(
+        test_dataset, batch_size=batch_size * 2, shuffle=False, num_workers=2
     )
 
-    return train_dl, val_dl, test_dl, len(vocab)
+    return train_loader, val_loader, test_loader, vocab
 
 
 def prepare_mnist_dataloaders(batch_size=128, val_split=0.1):
+    """
+    Prepare DataLoaders for MNIST dataset.
+    
+    Args:
+        batch_size (int): Number of samples per batch
+        val_split (float): Fraction of training data to use for validation
+        
+    Returns:
+        tuple: (train_loader, val_loader, test_loader) DataLoaders for MNIST
+    """
+    # Define image transformations
     transform = transforms.Compose(
         [
-            transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,)),
+            transforms.ToTensor(),  # Convert PIL Image to tensor
+            transforms.Normalize((0.1307,), (0.3081,)),  # MNIST mean and std
         ]
     )
-    train_dataset = datasets.MNIST("./data", train=True, download=True, transform=transform)
-    test_dataset = datasets.MNIST("./data", train=False, transform=transform)
 
+    # Load MNIST dataset
+    train_dataset = datasets.MNIST(
+        "./data", train=True, download=True, transform=transform
+    )
+    test_dataset = datasets.MNIST(
+        "./data", train=False, download=True, transform=transform
+    )
+
+    # Split training data into train/validation sets
     val_size = int(len(train_dataset) * val_split)
-    train_size = len(train_dataset) - val_size
-    generator = torch.Generator().manual_seed(42)
-    train_subset, val_subset = random_split(train_dataset, [train_size, val_size], generator=generator)
+    train_dataset, val_dataset = random_split(
+        train_dataset, [len(train_dataset) - val_size, val_size]
+    )
 
-    train_dl = DataLoader(
-        train_subset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=4,
-        pin_memory=True,
+    # Create data loaders
+    train_loader = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True, num_workers=2
     )
-    val_dl = DataLoader(
-        val_subset,
-        batch_size=batch_size * 2,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=True,
+    val_loader = DataLoader(
+        val_dataset, batch_size=batch_size * 2, shuffle=False, num_workers=2
     )
-    test_dl = DataLoader(
-        test_dataset,
-        batch_size=batch_size * 2,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=True,
+    test_loader = DataLoader(
+        test_dataset, batch_size=batch_size * 2, shuffle=False, num_workers=2
     )
-    return train_dl, val_dl, test_dl
+
+    return train_loader, val_loader, test_loader
 
 
 def prepare_emnist_dataloaders(batch_size=128, val_split=0.1):
+    """
+    Prepare DataLoaders for EMNIST Letters dataset.
+    
+    Args:
+        batch_size (int): Number of samples per batch
+        val_split (float): Fraction of training data to use for validation
+        
+    Returns:
+        tuple: (train_loader, val_loader, test_loader) DataLoaders for EMNIST Letters
+    """
+    # Define image transformations
     transform = transforms.Compose(
         [
-            transforms.ToTensor(),
-            transforms.Lambda(rotate_emnist),
-            transforms.Normalize((0.1307,), (0.3081,)),
+            transforms.ToTensor(),  # Convert PIL Image to tensor
+            transforms.Normalize((0.1736,), (0.3317,)),  # EMNIST Letters mean and std
+            transforms.Lambda(rotate_emnist),  # Rotate images to correct orientation
         ]
     )
+
+    # Load EMNIST Letters dataset
     train_dataset = datasets.EMNIST(
-        "./data",
-        split="letters",
-        train=True,
-        download=True,
-        transform=transform,
+        "./data", split="letters", train=True, download=True, transform=transform
     )
     test_dataset = datasets.EMNIST(
-        "./data",
-        split="letters",
-        train=False,
-        download=True,
-        transform=transform,
+        "./data", split="letters", train=False, download=True, transform=transform
     )
 
-    train_dataset.targets = train_dataset.targets - 1
-    test_dataset.targets = test_dataset.targets - 1
+    # Filter out empty classes (some EMNIST letters have no test samples)
+    train_indices = [i for i, (_, label) in enumerate(train_dataset) if label > 0]
+    test_indices = [i for i, (_, label) in enumerate(test_dataset) if label > 0]
 
+    train_dataset = torch.utils.data.Subset(train_dataset, train_indices)
+    test_dataset = torch.utils.data.Subset(test_dataset, test_indices)
+
+    # Adjust labels to be 0-25 (A-Z)
+    for dataset in [train_dataset, test_dataset]:
+        for i in range(len(dataset)):
+            if hasattr(dataset, 'dataset'):
+                dataset.dataset.targets[dataset.indices[i]] -= 1
+            else:
+                dataset.targets[i] -= 1
+
+    # Split training data into train/validation sets
     val_size = int(len(train_dataset) * val_split)
-    train_size = len(train_dataset) - val_size
-    generator = torch.Generator().manual_seed(123)
-    train_subset, val_subset = random_split(train_dataset, [train_size, val_size], generator=generator)
+    train_dataset, val_dataset = random_split(
+        train_dataset, [len(train_dataset) - val_size, val_size]
+    )
 
-    train_dl = DataLoader(
-        train_subset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=4,
-        pin_memory=True,
+    # Create data loaders
+    train_loader = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True, num_workers=2
     )
-    val_dl = DataLoader(
-        val_subset,
-        batch_size=batch_size * 2,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=True,
+    val_loader = DataLoader(
+        val_dataset, batch_size=batch_size * 2, shuffle=False, num_workers=2
     )
-    test_dl = DataLoader(
-        test_dataset,
-        batch_size=batch_size * 2,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=True,
+    test_loader = DataLoader(
+        test_dataset, batch_size=batch_size * 2, shuffle=False, num_workers=2
     )
-    return train_dl, val_dl, test_dl
+
+    return train_loader, val_loader, test_loader
 
 
 class ChaosLanguageModel(nn.Module):
+    """
+    A language model using ChaosNet architecture for text classification.
+    
+    This model processes sequences of tokens through an embedding layer, a ChaosCortex
+    for temporal processing, and a linear readout layer for classification.
+    
+    Args:
+        vocab_size (int): Size of the vocabulary
+        embed_dim (int): Dimensionality of token embeddings
+        hidden (int): Number of hidden units in the ChaosCortex
+        ticks (int): Number of time steps to run the ChaosCortex
+        shared_cortex (ChaosCortex, optional): Pre-initialized ChaosCortex to share between models
+        **cortex_kwargs: Additional arguments for ChaosNeuronParams
+    """
     def __init__(
         self,
         vocab_size,
@@ -247,30 +376,36 @@ class ChaosLanguageModel(nn.Module):
         **cortex_kwargs
     ):
         super().__init__()
+        # Embedding layer for input tokens
         self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=PAD_IDX)
 
+        # Use shared cortex if provided, otherwise create a new one
         if shared_cortex is not None:
             self.cortex = shared_cortex
         else:
+            # Configure neuron parameters for the chaos network
             neuron_params = ChaosNeuronParams(
-                threshold=0.5,
-                noise_std=0.01,
-                fail_prob=cortex_kwargs.get('fail_prob', 0.5),
-                decay=0.02,
-                refractory_decay=0.95,
+                threshold=0.5,               # Spiking threshold
+                noise_std=0.01,              # Standard deviation of noise
+                fail_prob=cortex_kwargs.get('fail_prob', 0.5),  # Probability of spike failure
+                decay=0.02,                  # Membrane potential decay rate
+                refractory_decay=0.95,       # Refractory period decay rate
             )
+            # Configure cortex (network) parameters
             cortex_params = CortexParams(
-                input_size=embed_dim,
-                hidden_sizes=[hidden],
-                neuron=neuron_params,
+                input_size=embed_dim,        # Input dimension matches embedding size
+                hidden_sizes=[hidden],       # Single hidden layer
+                neuron=neuron_params,        # Neuron configuration
             )
             self.cortex = ChaosCortex(cortex_params)
 
+        # Output layer for classification
         self.readout = nn.Linear(hidden, NUM_AG_CLASSES)
+        # Initialize weights using Kaiming initialization
         nn.init.kaiming_normal_(self.readout.weight, mode="fan_in", nonlinearity="linear")
         nn.init.constant_(self.readout.bias, 0.0)
 
-        self.ticks = ticks
+        self.ticks = ticks  # Number of time steps to run the network
 
     def forward(self, tokens, collect_spikes=False):
         emb = self.embedding(tokens)
@@ -305,6 +440,20 @@ class ChaosLanguageModel(nn.Module):
 
 
 class ChaosVisionModel(nn.Module):
+    """
+    A vision model using ChaosNet architecture for image classification.
+    
+    This model processes images through a CNN feature extractor, projects the features
+    to a lower dimension, processes them through a ChaosCortex, and produces class scores.
+    
+    Args:
+        embed_dim (int): Dimensionality of the projected features
+        hidden (int): Number of hidden units in the ChaosCortex
+        ticks (int): Number of time steps to run the ChaosCortex
+        num_classes (int): Number of output classes
+        shared_cortex (ChaosCortex, optional): Pre-initialized ChaosCortex to share between models
+        **cortex_kwargs: Additional arguments for ChaosNeuronParams
+    """
     def __init__(
         self,
         embed_dim=128,
@@ -315,46 +464,68 @@ class ChaosVisionModel(nn.Module):
         **cortex_kwargs,
     ):
         super().__init__()
+        # CNN-based feature extractor
         self.feature_extractor = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),
+            # First conv block
+            nn.Conv2d(1, 32, kernel_size=3, padding=1),  # Preserve spatial dimensions
+            nn.BatchNorm2d(32),  # Normalize activations
+            nn.ReLU(inplace=True),  # Non-linearity
+            nn.MaxPool2d(2),  # Downsample by factor of 2
+            
+            # Second conv block
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),
+            nn.MaxPool2d(2),  # Final feature map size: 7x7 for 28x28 input
         )
+        
+        # Project features to lower dimension for chaos processing
         self.projection = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(64 * 7 * 7, embed_dim),
-            nn.ReLU(inplace=True),
+            nn.Flatten(),  # Flatten spatial dimensions
+            nn.Linear(64 * 7 * 7, embed_dim),  # Project to embed_dim
+            nn.ReLU(inplace=True),  # Non-linearity
         )
 
+        # Use shared cortex if provided, otherwise create a new one
         if shared_cortex is not None:
             self.cortex = shared_cortex
         else:
+            # Configure neuron parameters for the chaos network
             neuron_params = ChaosNeuronParams(
-                threshold=0.5,
-                noise_std=0.01,
-                fail_prob=cortex_kwargs.get('fail_prob', 0.5),
-                decay=0.02,
-                refractory_decay=0.95,
+                threshold=0.5,               # Spiking threshold
+                noise_std=0.01,              # Standard deviation of noise
+                fail_prob=cortex_kwargs.get('fail_prob', 0.5),  # Probability of spike failure
+                decay=0.02,                  # Membrane potential decay rate
+                refractory_decay=0.95,       # Refractory period decay rate
             )
+            # Configure cortex (network) parameters
             cortex_params = CortexParams(
-                input_size=embed_dim,
-                hidden_sizes=[hidden],
-                neuron=neuron_params,
+                input_size=embed_dim,        # Input dimension matches projection size
+                hidden_sizes=[hidden],       # Single hidden layer
+                neuron=neuron_params,        # Neuron configuration
             )
             self.cortex = ChaosCortex(cortex_params)
 
+        # Output layer for classification
         self.readout = nn.Linear(hidden, num_classes)
+        # Initialize weights using Kaiming initialization
         nn.init.kaiming_normal_(self.readout.weight, mode="fan_in", nonlinearity="linear")
         nn.init.constant_(self.readout.bias, 0.0)
 
-        self.ticks = ticks
+        self.ticks = ticks  # Number of time steps to run the network
 
     def forward(self, images, collect_spikes=False):
+        """
+        Forward pass of the vision model.
+        
+        Args:
+            images (torch.Tensor): Input images [batch_size, 1, height, width]
+            collect_spikes (bool): Whether to collect and return spike information
+            
+        Returns:
+            torch.Tensor: Output logits [batch_size, num_classes]
+            torch.Tensor: (Optional) Spike information if collect_spikes=True
+        """
         emb = self.projection(self.feature_extractor(images))
 
         batch = images.size(0)
