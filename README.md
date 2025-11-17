@@ -80,7 +80,7 @@ All Python files include detailed docstrings following the Google Python Style G
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/chaosnet.git
+   git clone https://github.com/Likara789/chaosnet.git
    cd chaosnet
    ```
 
