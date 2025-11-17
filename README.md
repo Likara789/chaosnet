@@ -64,7 +64,7 @@ ChaosNet is a novel neural network architecture inspired by chaotic systems, fea
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/chaosnet.git
+   git clone https://github.com/Likara789/chaosnet.git
    cd chaosnet
    ```
 
