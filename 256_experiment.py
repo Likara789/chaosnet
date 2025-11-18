@@ -1,6 +1,7 @@
 import csv
 import json
 import pickle
+import random
 import re
 import tarfile
 import urllib.request
@@ -18,9 +19,13 @@ from torch.utils.data import DataLoader, Dataset, random_split
 from torch.optim.lr_scheduler import _LRScheduler
 from torchvision import datasets, transforms
 
+try:
+    from torchtext.datasets import IMDB
+except (ImportError, OSError):  # torchtext is optional for IMDB support
+    IMDB = None
+
 from chaosnet.config import ChaosNeuronParams, CortexParams
 from chaosnet.core.cortex import ChaosCortex
-from typing import Optional, Dict, Any, List
 
 # =============================================
 # Configuration Section
@@ -32,6 +37,7 @@ class DataConfig:
     ag_news_url: str = "https://s3.amazonaws.com/fast-ai-nlp/ag_news_csv.tgz"
     ag_news_dir: str = "./data/ag_news"
     max_seq_len: int = 128
+    imdb_max_seq_len: int = 256
     min_freq: int = 5
     max_tokens: int = 20000
     val_split: float = 0.1
@@ -50,17 +56,20 @@ class DataConfig:
         if self.batch_sizes is None:
             self.batch_sizes = {
                 'ag_news': 64,
+                'imdb': 64,
+                'fashion_mnist': 128,
                 'mnist': 128,
-                'emnist': 128
+                'cifar10': 128,
+                'emnist_letters': 128
             }
 
 
 @dataclass
 class ModelConfig:
     # Shared model parameters
-    shared_embed_dim: int = 32
-    shared_hidden: int = 128
-    shared_ticks: int = 10
+    shared_embed_dim: int = 8
+    shared_hidden: int = 32
+    shared_ticks: int = 15
     
     # Vision model specific
     vision_features: List[int] = None  # Will be initialized in __post_init__
@@ -77,7 +86,7 @@ class ModelConfig:
     
     def __post_init__(self):
         if self.vision_features is None:
-            self.vision_features = [32, 64]  # Feature channels for conv layers
+            self.vision_features = [16, 32]  # Feature channels for conv layers
 
 
 def create_cortex(input_dim: int, hidden_dim: int, config: ModelConfig, shared_cortex=None):
@@ -123,14 +132,18 @@ class TrainingConfig:
         if self.accumulation_steps is None:
             self.accumulation_steps = {
                 'ag_news': 4,
+                'imdb': 4,
+                'fashion_mnist': 1,
                 'mnist': 1,
+                'cifar10': 2,
                 'emnist_letters': 1
             }
             
         if self.tasks is None:
             self.tasks = {
                 'ag_news': {
-                    'epochs': 4,
+                    'epochs': 8,
+                    'checkpoint_interval': 5,
                     'optimizer': {
                         'lr': 5e-4,
                         'weight_decay': 1e-4,
@@ -143,8 +156,24 @@ class TrainingConfig:
                         'anneal_strategy': 'cos'
                     }
                 },
-                'mnist': {
-                    'epochs': 4,
+                'imdb': {
+                    'epochs': 8,
+                    'checkpoint_interval': 5,
+                    'optimizer': {
+                        'lr': 5e-4,
+                        'weight_decay': 1e-4,
+                        'betas': (0.9, 0.999),
+                        'eps': 1e-8
+                    },
+                    'scheduler': {
+                        'max_lr': 1e-3,
+                        'pct_start': 0.3,
+                        'anneal_strategy': 'cos'
+                    }
+                },
+                'fashion_mnist': {
+                    'epochs': 6,
+                    'checkpoint_interval': 3,
                     'optimizer': {
                         'lr': 1e-3,
                         'weight_decay': 1e-4,
@@ -157,8 +186,39 @@ class TrainingConfig:
                         'anneal_strategy': 'cos'
                     }
                 },
+                'mnist': {
+                    'epochs': 8,
+                    'checkpoint_interval': 3,
+                    'optimizer': {
+                        'lr': 1e-3,
+                        'weight_decay': 1e-4,
+                        'betas': (0.9, 0.999),
+                        'eps': 1e-8
+                    },
+                    'scheduler': {
+                        'max_lr': 2e-3,
+                        'pct_start': 0.2,
+                        'anneal_strategy': 'cos'
+                    }
+                },
+                'cifar10': {
+                    'epochs': 10,
+                    'checkpoint_interval': 4,
+                    'optimizer': {
+                        'lr': 1e-3,
+                        'weight_decay': 5e-4,
+                        'betas': (0.9, 0.999),
+                        'eps': 1e-8
+                    },
+                    'scheduler': {
+                        'max_lr': 2e-3,
+                        'pct_start': 0.2,
+                        'anneal_strategy': 'cos'
+                    }
+                },
                 'emnist_letters': {
-                    'epochs': 5,
+                    'epochs': 10,
+                    'checkpoint_interval': 3,
                     'optimizer': {
                         'lr': 1e-3,
                         'weight_decay': 1e-4,
@@ -185,14 +245,17 @@ UNK_TOKEN = "<unk>"
 PAD_IDX = 0
 UNK_IDX = 1
 NUM_AG_CLASSES = 4
+NUM_IMDB_CLASSES = 2
+NUM_FASHION_CLASSES = 10
 NUM_MNIST_CLASSES = 10
+NUM_CIFAR_CLASSES = 10
 NUM_EMNIST_CLASSES = 26
 AG_NEWS_URL = "https://s3.amazonaws.com/fast-ai-nlp/ag_news_csv.tgz"
 AG_NEWS_DIR = Path("./data/ag_news")
 TOKEN_REGEX = re.compile(r"\w+")
 
 
-def rotate_emnist(image):
+def rotate_emnist(image):            
     return torch.rot90(image, 1, dims=(1, 2))
 
 
@@ -262,17 +325,30 @@ def simple_tokenizer(text):
     return TOKEN_REGEX.findall(text.lower())
 
 
-def prepare_ag_news_dataloaders(batch_size=64, max_seq_len=128, val_split=0.1):
+def prepare_ag_news_dataloaders(
+    batch_size=64,
+    max_seq_len=128,
+    val_split=0.1,
+    min_freq=5,
+    max_tokens=20000,
+    seed=42,
+):
     data_root = download_ag_news()
     train_samples = read_ag_news_split(data_root, "train")
     test_samples = read_ag_news_split(data_root, "test")
 
-    vocab = build_vocab(train_samples, simple_tokenizer)
-    val_size = int(len(train_samples) * val_split)
-    train_slice, val_slice = (
-        train_samples[val_size:],
-        train_samples[:val_size],
+    rng = random.Random(seed)
+    rng.shuffle(train_samples)
+
+    vocab = build_vocab(
+        train_samples,
+        simple_tokenizer,
+        min_freq=min_freq,
+        max_tokens=max_tokens,
     )
+    val_size = int(len(train_samples) * val_split)
+    val_slice = train_samples[:val_size]
+    train_slice = train_samples[val_size:]
 
     train_ds = LanguageDataset(train_slice, vocab, simple_tokenizer, max_seq_len)
     val_ds = LanguageDataset(val_slice, vocab, simple_tokenizer, max_seq_len)
@@ -303,6 +379,77 @@ def prepare_ag_news_dataloaders(batch_size=64, max_seq_len=128, val_split=0.1):
     return train_dl, val_dl, test_dl, len(vocab)
 
 
+def prepare_imdb_dataloaders(
+    batch_size=64,
+    max_seq_len=256,
+    val_split=0.1,
+    min_freq=5,
+    max_tokens=30000,
+    seed=1337,
+):
+    if IMDB is None:
+        print(
+            "Warning: torchtext IMDB dataset could not be loaded; "
+            "falling back to a synthetic binary dataset for language coverage."
+        )
+        placeholder_text = [
+            (1, "This review was absolutely wonderful and I loved it."),
+            (2, "The product was disappointing and I hated the experience."),
+            (1, "Quite positive vibes here, a great story that uplifted me."),
+            (2, "A negative tone prevailed, could not finish it."),
+        ]
+        train_samples = placeholder_text * 100
+        test_samples = placeholder_text * 20
+    else:
+        label_map = {"neg": 1, "pos": 2}
+        train_iter = list(IMDB(root="./data", split="train"))
+        test_iter = list(IMDB(root="./data", split="test"))
+
+        train_samples = [(label_map[label], text) for label, text in train_iter]
+        test_samples = [(label_map[label], text) for label, text in test_iter]
+
+    rng = random.Random(seed)
+    rng.shuffle(train_samples)
+
+    val_size = int(len(train_samples) * val_split)
+    val_samples = train_samples[:val_size]
+    train_samples = train_samples[val_size:]
+
+    vocab = build_vocab(
+        train_samples,
+        simple_tokenizer,
+        min_freq=min_freq,
+        max_tokens=max_tokens,
+    )
+
+    train_ds = LanguageDataset(train_samples, vocab, simple_tokenizer, max_seq_len)
+    val_ds = LanguageDataset(val_samples, vocab, simple_tokenizer, max_seq_len)
+    test_ds = LanguageDataset(test_samples, vocab, simple_tokenizer, max_seq_len)
+
+    train_dl = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True,
+    )
+    val_dl = DataLoader(
+        val_ds,
+        batch_size=batch_size * 2,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True,
+    )
+    test_dl = DataLoader(
+        test_ds,
+        batch_size=batch_size * 2,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True,
+    )
+    return train_dl, val_dl, test_dl, len(vocab)
+
+
 def prepare_mnist_dataloaders(batch_size=128, val_split=0.1):
     transform = transforms.Compose(
         [
@@ -316,6 +463,105 @@ def prepare_mnist_dataloaders(batch_size=128, val_split=0.1):
     val_size = int(len(train_dataset) * val_split)
     train_size = len(train_dataset) - val_size
     generator = torch.Generator().manual_seed(42)
+    train_subset, val_subset = random_split(train_dataset, [train_size, val_size], generator=generator)
+
+    train_dl = DataLoader(
+        train_subset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True,
+    )
+    val_dl = DataLoader(
+        val_subset,
+        batch_size=batch_size * 2,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True,
+    )
+    test_dl = DataLoader(
+        test_dataset,
+        batch_size=batch_size * 2,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True,
+    )
+    return train_dl, val_dl, test_dl
+
+
+def prepare_fashion_mnist_dataloaders(batch_size=128, val_split=0.1):
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize((0.2860,), (0.3530,)),
+        ]
+    )
+    train_dataset = datasets.FashionMNIST(
+        "./data",
+        train=True,
+        download=True,
+        transform=transform,
+    )
+    test_dataset = datasets.FashionMNIST(
+        "./data",
+        train=False,
+        download=True,
+        transform=transform,
+    )
+
+    val_size = int(len(train_dataset) * val_split)
+    train_size = len(train_dataset) - val_size
+    generator = torch.Generator().manual_seed(123)
+    train_subset, val_subset = random_split(train_dataset, [train_size, val_size], generator=generator)
+
+    train_dl = DataLoader(
+        train_subset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True,
+    )
+    val_dl = DataLoader(
+        val_subset,
+        batch_size=batch_size * 2,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True,
+    )
+    test_dl = DataLoader(
+        test_dataset,
+        batch_size=batch_size * 2,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True,
+    )
+    return train_dl, val_dl, test_dl
+
+
+def prepare_cifar10_dataloaders(batch_size=128, val_split=0.1):
+    normalize = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616))
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            normalize,
+        ]
+    )
+    train_dataset = datasets.CIFAR10(
+        "./data",
+        train=True,
+        download=True,
+        transform=transform,
+    )
+    test_dataset = datasets.CIFAR10(
+        "./data",
+        train=False,
+        download=True,
+        transform=transform,
+    )
+
+    val_size = int(len(train_dataset) * val_split)
+    train_size = len(train_dataset) - val_size
+    generator = torch.Generator().manual_seed(123)
     train_subset, val_subset = random_split(train_dataset, [train_size, val_size], generator=generator)
 
     train_dl = DataLoader(
@@ -402,6 +648,7 @@ class ChaosLanguageModel(nn.Module):
         self,
         vocab_size: int,
         config: ModelConfig,
+        num_classes: int = NUM_AG_CLASSES,
         shared_cortex: Optional[ChaosCortex] = None,
     ):
         super().__init__()
@@ -415,7 +662,7 @@ class ChaosLanguageModel(nn.Module):
             shared_cortex=shared_cortex
         )
         
-        self.readout = nn.Linear(config.shared_hidden, NUM_AG_CLASSES)
+        self.readout = nn.Linear(config.shared_hidden, num_classes)
         nn.init.kaiming_normal_(self.readout.weight, mode="fan_in", nonlinearity="linear")
         nn.init.constant_(self.readout.bias, 0.0)
         
@@ -449,12 +696,13 @@ class ChaosVisionModel(nn.Module):
         self,
         config: ModelConfig,
         num_classes: int = NUM_MNIST_CLASSES,
+        in_channels: int = 1,
         shared_cortex: Optional[ChaosCortex] = None,
     ):
         super().__init__()
         # Feature extractor using configurable feature channels
         self.feature_extractor = nn.Sequential(
-            nn.Conv2d(1, config.vision_features[0], kernel_size=3, padding=1),
+            nn.Conv2d(in_channels, config.vision_features[0], kernel_size=3, padding=1),
             nn.BatchNorm2d(config.vision_features[0]),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),
@@ -462,12 +710,13 @@ class ChaosVisionModel(nn.Module):
             nn.BatchNorm2d(config.vision_features[1]),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),
+            nn.AdaptiveAvgPool2d((1, 1)),
         )
         
         # Calculate flattened size after convolutions and pooling
         self.projection = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(config.vision_features[1] * 7 * 7, config.shared_embed_dim),
+            nn.Linear(config.vision_features[1], config.shared_embed_dim),
             nn.ReLU(inplace=True),
         )
         
@@ -702,14 +951,51 @@ def main():
     exp_dir = setup_experiment()
     print(f"Experiment directory: {exp_dir}")
 
-    ag_train_dl, ag_val_dl, ag_test_dl, vocab_size = prepare_ag_news_dataloaders()
-    mnist_train_dl, mnist_val_dl, mnist_test_dl = prepare_mnist_dataloaders()
-    emnist_train_dl, emnist_val_dl, emnist_test_dl = prepare_emnist_dataloaders()
+    ag_train_dl, ag_val_dl, ag_test_dl, ag_vocab_size = prepare_ag_news_dataloaders(
+        batch_size=data_config.batch_sizes.get("ag_news", 64),
+        max_seq_len=data_config.max_seq_len,
+        val_split=data_config.val_split,
+        min_freq=data_config.min_freq,
+        max_tokens=data_config.max_tokens,
+    )
+    imdb_train_dl, imdb_val_dl, imdb_test_dl, imdb_vocab_size = prepare_imdb_dataloaders(
+        batch_size=data_config.batch_sizes.get("imdb", 64),
+        max_seq_len=data_config.imdb_max_seq_len,
+        val_split=data_config.val_split,
+        min_freq=data_config.min_freq,
+        max_tokens=max(data_config.max_tokens, 30000),
+    )
+    fashion_train_dl, fashion_val_dl, fashion_test_dl = prepare_fashion_mnist_dataloaders(
+        batch_size=data_config.batch_sizes.get("fashion_mnist", 128),
+        val_split=data_config.val_split,
+    )
+    mnist_train_dl, mnist_val_dl, mnist_test_dl = prepare_mnist_dataloaders(
+        batch_size=data_config.batch_sizes.get("mnist", 128),
+        val_split=data_config.val_split,
+    )
+    cifar_train_dl, cifar_val_dl, cifar_test_dl = prepare_cifar10_dataloaders(
+        batch_size=data_config.batch_sizes.get("cifar10", 128),
+        val_split=data_config.val_split,
+    )
+    emnist_train_dl, emnist_val_dl, emnist_test_dl = prepare_emnist_dataloaders(
+        batch_size=data_config.batch_sizes.get("emnist_letters", 128),
+        val_split=data_config.val_split,
+    )
+
+    task_order = ["ag_news", "imdb", "fashion_mnist", "mnist", "cifar10", "emnist_letters"]
+    task_dataloaders = {
+        "ag_news": (ag_train_dl, ag_val_dl, ag_test_dl),
+        "imdb": (imdb_train_dl, imdb_val_dl, imdb_test_dl),
+        "fashion_mnist": (fashion_train_dl, fashion_val_dl, fashion_test_dl),
+        "mnist": (mnist_train_dl, mnist_val_dl, mnist_test_dl),
+        "cifar10": (cifar_train_dl, cifar_val_dl, cifar_test_dl),
+        "emnist_letters": (emnist_train_dl, emnist_val_dl, emnist_test_dl),
+    }
 
     # Shared cortex parameters
-    shared_hidden = 128
-    shared_embed_dim = 32
-    shared_ticks = 10
+    shared_hidden = 32  # Halved from 128
+    shared_embed_dim = 8  # Halved from 32
+    shared_ticks = 15
     shared_fail_prob = 0.5  # Using the more conservative fail_prob
 
     # Create shared cortex
@@ -736,125 +1022,113 @@ def main():
     )
 
     # Initialize models with shared cortex
-    ag_model = ChaosLanguageModel(
-        vocab_size=vocab_size,
-        config=model_config,
-        shared_cortex=shared_cortex,
-    ).to(device)
-
-    mnist_model = ChaosVisionModel(
-        config=model_config,
-        shared_cortex=shared_cortex,
-    ).to(device)
-
-    emnist_model = ChaosVisionModel(
-        config=model_config,
-        num_classes=NUM_EMNIST_CLASSES,
-        shared_cortex=shared_cortex,
-    ).to(device)
+    models = {
+        "ag_news": ChaosLanguageModel(
+            vocab_size=ag_vocab_size,
+            config=model_config,
+            num_classes=NUM_AG_CLASSES,
+            shared_cortex=shared_cortex,
+        ).to(device),
+        "imdb": ChaosLanguageModel(
+            vocab_size=imdb_vocab_size,
+            config=model_config,
+            num_classes=NUM_IMDB_CLASSES,
+            shared_cortex=shared_cortex,
+        ).to(device),
+        "fashion_mnist": ChaosVisionModel(
+            config=model_config,
+            num_classes=NUM_FASHION_CLASSES,
+            shared_cortex=shared_cortex,
+        ).to(device),
+        "mnist": ChaosVisionModel(
+            config=model_config,
+            num_classes=NUM_MNIST_CLASSES,
+            shared_cortex=shared_cortex,
+        ).to(device),
+        "cifar10": ChaosVisionModel(
+            config=model_config,
+            num_classes=NUM_CIFAR_CLASSES,
+            in_channels=3,
+            shared_cortex=shared_cortex,
+        ).to(device),
+        "emnist_letters": ChaosVisionModel(
+            config=model_config,
+            num_classes=NUM_EMNIST_CLASSES,
+            shared_cortex=shared_cortex,
+        ).to(device),
+    }
 
     retention_dir = exp_dir / "retention_checks"
     retention_dir.mkdir(parents=True, exist_ok=True)
 
     retention_models = {
-        "ag_news": (ag_model, ag_test_dl),
-        "mnist": (mnist_model, mnist_test_dl),
-        "emnist_letters": (emnist_model, emnist_test_dl),
+        task: (models[task], task_dataloaders[task][2]) for task in task_order
     }
 
-    baseline_results = run_retention_suite(retention_models, device, runs=3)
+    baseline_results = run_retention_suite(
+        retention_models,
+        device,
+        runs=training_config.retention_runs,
+    )
     save_retention_report({"baseline": baseline_results}, retention_dir / "baseline.json")
 
-    ag_optimizer = optim.AdamW(ag_model.parameters(), lr=5e-4, weight_decay=1e-4)
-    ag_scheduler = optim.lr_scheduler.OneCycleLR(
-        ag_optimizer,
-        max_lr=1e-3,
-        steps_per_epoch=len(ag_train_dl),
-        epochs=8,
-        pct_start=0.3,
-        anneal_strategy="cos",
-    )
+    best_val_scores = {}
+    for task_name in task_order:
+        train_dl, val_dl, test_dl = task_dataloaders[task_name]
+        task_cfg = training_config.tasks.get(task_name, {})
+        optimizer_cfg = task_cfg.get("optimizer", {})
+        optimizer = optim.AdamW(
+            models[task_name].parameters(),
+            lr=optimizer_cfg.get("lr", 1e-3),
+            weight_decay=optimizer_cfg.get("weight_decay", 1e-4),
+            betas=optimizer_cfg.get("betas", (0.9, 0.999)),
+            eps=optimizer_cfg.get("eps", 1e-8),
+        )
+        epochs = task_cfg.get("epochs", 5)
+        scheduler_cfg = task_cfg.get("scheduler", {})
+        scheduler = optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=scheduler_cfg.get("max_lr", optimizer_cfg.get("lr", 1e-3)),
+            steps_per_epoch=len(train_dl),
+            epochs=epochs,
+            pct_start=scheduler_cfg.get("pct_start", 0.3),
+            anneal_strategy=scheduler_cfg.get("anneal_strategy", "cos"),
+        )
+        checkpoint_interval = task_cfg.get("checkpoint_interval", training_config.checkpoint_interval)
+        best_val_scores[task_name] = train_task(
+            task_name,
+            models[task_name],
+            (train_dl, val_dl, test_dl),
+            optimizer,
+            scheduler,
+            device,
+            exp_dir,
+            epochs=epochs,
+            accumulation_steps=training_config.accumulation_steps.get(task_name, 1),
+            checkpoint_interval=checkpoint_interval,
+        )
 
-    mnist_optimizer = optim.AdamW(mnist_model.parameters(), lr=1e-3, weight_decay=1e-4)
-    mnist_scheduler = optim.lr_scheduler.OneCycleLR(
-        mnist_optimizer,
-        max_lr=2e-3,
-        steps_per_epoch=len(mnist_train_dl),
-        epochs=8,
-        pct_start=0.2,
-        anneal_strategy="cos",
-    )
+    print("\nTraining complete for all tasks.")
+    for task_name in task_order:
+        print(f"{task_name.upper()} | Best Val Acc: {best_val_scores[task_name]*100:.2f}%")
+    print(f"See {exp_dir} for checkpoints and logs.")
 
-    emnist_optimizer = optim.AdamW(emnist_model.parameters(), lr=1e-3, weight_decay=1e-4)
-    emnist_scheduler = optim.lr_scheduler.OneCycleLR(
-        emnist_optimizer,
-        max_lr=2e-3,
-        steps_per_epoch=len(emnist_train_dl),
-        epochs=10,
-        pct_start=0.2,
-        anneal_strategy="cos",
-    )
-
-    ag_best = train_task(
-        "ag_news",
-        ag_model,
-        (ag_train_dl, ag_val_dl, ag_test_dl),
-        ag_optimizer,
-        ag_scheduler,
+    final_results = run_retention_suite(
+        retention_models,
         device,
-        exp_dir,
-        epochs=8,
-        accumulation_steps=4,
-        checkpoint_interval=5,
+        runs=training_config.retention_runs,
     )
-
-    mnist_best = train_task(
-        "mnist",
-        mnist_model,
-        (mnist_train_dl, mnist_val_dl, mnist_test_dl),
-        mnist_optimizer,
-        mnist_scheduler,
-        device,
-        exp_dir,
-        epochs=8,
-        accumulation_steps=1,
-        checkpoint_interval=3,
-    )
-
-    emnist_best = train_task(
-        "emnist_letters",
-        emnist_model,
-        (emnist_train_dl, emnist_val_dl, emnist_test_dl),
-        emnist_optimizer,
-        emnist_scheduler,
-        device,
-        exp_dir,
-        epochs=10,
-        accumulation_steps=1,
-        checkpoint_interval=3,
-    )
-
-    print(
-        f"\nTraining complete for all tasks. "
-        f"Best Val Acc - AG_NEWS: {ag_best*100:.2f}% | MNIST: {mnist_best*100:.2f}% "
-        f"| EMNIST: {emnist_best*100:.2f}%. See {exp_dir} for checkpoints and logs."
-    )
-
-    final_results = run_retention_suite(retention_models, device, runs=3)
     save_retention_report({"final": final_results}, retention_dir / "final.json")
     for line in summarize_retention(baseline_results, final_results):
         print(line)
 
     # Save final models at the end of the run (top-level for convenience)
     try:
-        torch.save(ag_model.state_dict(), exp_dir / "final_ag_news_model.pt")
-        torch.save(mnist_model.state_dict(), exp_dir / "final_mnist_model.pt")
-        torch.save(emnist_model.state_dict(), exp_dir / "final_emnist_letters_model.pt")
+        for task_name, model in models.items():
+            torch.save(model.state_dict(), exp_dir / f"final_{task_name}_model.pt")
     except Exception as e:
         print(f"Warning: failed to save final models to {exp_dir}: {e}")
 
 
 if __name__ == "__main__":
     main()
-
-

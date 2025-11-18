@@ -59,30 +59,19 @@ class ChaosMNISTModel(nn.Module):
         batch = x.size(0)
         x = x.view(batch, -1)
 
-        # Initialize state fresh each call to avoid cross-batch leakage
-        state = self.cortex.init_state(batch, device=x.device, dtype=x.dtype)
+        ticks = self.ticks
+        expanded = x.unsqueeze(1).expand(batch, ticks, -1).reshape(batch * ticks, -1)
 
-        # Accumulate spikes over ticks
-        spikes_accum = torch.zeros(batch, self.readout.in_features, device=x.device, dtype=x.dtype)
-        spikes_list: list[torch.Tensor] = [] if collect_spikes else []
+        out, _, layer_spikes = self.cortex(expanded, None)
+        spikes = layer_spikes[0] if layer_spikes else out
+        spikes = spikes.view(batch, ticks, -1)
 
-        for _ in range(self.ticks):
-            # cortex returns: (out, new_states, all_spikes)
-            out, state, layer_spikes = self.cortex(x, state)
-
-            # We only have one hidden layer, so use its spikes
-            spikes = layer_spikes[0] if layer_spikes else out
-
-            spikes_accum.add_(spikes)
-            if collect_spikes:
-                # Keep detached copy for visualization to avoid storing graph history
-                spikes_list.append(spikes.detach())
-
-        avg_spikes = spikes_accum / self.ticks
+        avg_spikes = spikes.mean(dim=1)
         logits = self.readout(avg_spikes)
 
         if collect_spikes:
-            return logits, torch.stack(spikes_list)
+            spike_stack = spikes.permute(1, 0, 2).detach()
+            return logits, spike_stack
         # Maintain previous shape contract (ticks, batch, hidden)
         return logits, avg_spikes.unsqueeze(0)
 

@@ -414,28 +414,19 @@ class ChaosLanguageModel(nn.Module):
         avg_emb = (emb * mask).sum(dim=1) / valid
 
         batch = tokens.size(0)
-        state = self.cortex.init_state(batch, device=tokens.device, dtype=avg_emb.dtype)
+        ticks = self.ticks
+        expanded = avg_emb.unsqueeze(1).expand(batch, ticks, -1).reshape(batch * ticks, -1)
 
-        spikes_accum = torch.zeros(
-            batch,
-            self.readout.in_features,
-            device=avg_emb.device,
-            dtype=avg_emb.dtype,
-        )
-        spikes_list = [] if collect_spikes else None
+        out, _, layer_spikes = self.cortex(expanded, None)
+        spikes = layer_spikes[0] if layer_spikes else out
+        spikes = spikes.view(batch, ticks, -1)
 
-        for _ in range(self.ticks):
-            out, state, layer_spikes = self.cortex(avg_emb, state)
-            spikes = layer_spikes[0] if layer_spikes else out
-            spikes_accum.add_(spikes)
-            if collect_spikes:
-                spikes_list.append(spikes.detach())
-
-        avg_spikes = spikes_accum / self.ticks
+        avg_spikes = spikes.mean(dim=1)
         logits = self.readout(avg_spikes)
 
         if collect_spikes:
-            return logits, torch.stack(spikes_list)
+            spike_stack = spikes.permute(1, 0, 2).detach()
+            return logits, spike_stack
         return logits, avg_spikes.unsqueeze(0)
 
 
@@ -529,28 +520,19 @@ class ChaosVisionModel(nn.Module):
         emb = self.projection(self.feature_extractor(images))
 
         batch = images.size(0)
-        state = self.cortex.init_state(batch, device=images.device, dtype=emb.dtype)
+        ticks = self.ticks
+        expanded = emb.unsqueeze(1).expand(batch, ticks, -1).reshape(batch * ticks, -1)
 
-        spikes_accum = torch.zeros(
-            batch,
-            self.readout.in_features,
-            device=emb.device,
-            dtype=emb.dtype,
-        )
-        spikes_list = [] if collect_spikes else None
+        out, _, layer_spikes = self.cortex(expanded, None)
+        spikes = layer_spikes[0] if layer_spikes else out
+        spikes = spikes.view(batch, ticks, -1)
 
-        for _ in range(self.ticks):
-            out, state, layer_spikes = self.cortex(emb, state)
-            spikes = layer_spikes[0] if layer_spikes else out
-            spikes_accum.add_(spikes)
-            if collect_spikes:
-                spikes_list.append(spikes.detach())
-
-        avg_spikes = spikes_accum / self.ticks
+        avg_spikes = spikes.mean(dim=1)
         logits = self.readout(avg_spikes)
 
         if collect_spikes:
-            return logits, torch.stack(spikes_list)
+            spike_stack = spikes.permute(1, 0, 2).detach()
+            return logits, spike_stack
         return logits, avg_spikes.unsqueeze(0)
 
 
@@ -895,7 +877,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 
 

@@ -116,20 +116,14 @@ class ChaosAdditionModel(nn.Module):
         avg_emb = (emb * mask).sum(dim=1) / valid
 
         batch = tokens.size(0)
-        state = self.cortex.init_state(batch, device=tokens.device, dtype=avg_emb.dtype)
-        spikes_accum = None
+        ticks = self.ticks
+        expanded = avg_emb.unsqueeze(1).expand(batch, ticks, -1).reshape(batch * ticks, -1)
 
-        for _ in range(self.ticks):
-            out, state, layer_spikes = self.cortex(avg_emb, state)
-            # Use the last layer's spikes if available, otherwise fall back to the cortex output
-            spikes = layer_spikes[-1] if layer_spikes else out
+        out, _, layer_spikes = self.cortex(expanded, None)
+        spikes = layer_spikes[-1] if layer_spikes else out
+        spikes = spikes.view(batch, ticks, -1)
 
-            if spikes_accum is None:
-                spikes_accum = torch.zeros_like(spikes)
-
-            spikes_accum.add_(spikes)
-
-        avg_spikes = spikes_accum / self.ticks
+        avg_spikes = spikes.mean(dim=1)
         logits = self.readout(avg_spikes)
         return logits
 

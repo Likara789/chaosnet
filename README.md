@@ -62,6 +62,19 @@ The "2-4K parameters" refers specifically to the **shared chaotic core** (ChaosC
 | MNIST | 99.20% | ~35K params |
 | EMNIST Letters | 93.89% | ~37K params |
 
+**256 Core Configuration** (8-dim embed, 16 hidden neurons, 15 ticks, 50% fail_prob):
+
+| Dataset | Best Val Acc | Test Acc | Retention Acc | Δ Improvement |
+|---------|--------------|-----------|---------------|---------------|
+| AG News | 84.04% | 84.08% | 79.73% | +54.67 pts |
+| IMDB | 32.50% | 30.00% | 38.75% | +13.33 pts |
+| Fashion MNIST | 83.42% | 83.42% | 40.31% | +30.31 pts |
+| MNIST | 93.27% | 94.08% | 65.38% | +55.58 pts |
+| CIFAR-10 | 49.64% | 50.90% | 42.42% | +32.42 pts |
+| EMNIST Letters | 78.85% | 78.97% | 78.79% | +74.51 pts |
+
+*Training Details*: AG News (8 epochs), IMDB (8 epochs), Fashion MNIST (6 epochs), MNIST (8 epochs), CIFAR-10 (10 epochs), EMNIST Letters (10 epochs)
+
 ---
 
 ## 📉 Comparative Performance
